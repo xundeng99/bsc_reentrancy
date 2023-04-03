@@ -146,6 +146,11 @@ type StateDB struct {
 	StorageUpdated int
 	AccountDeleted int
 	StorageDeleted int
+
+
+	global_reentrancy_transaction_pool map[common.Address][]*AdversaryAccount
+	current_sender_address  common.Address
+	temp_created_addresses             []common.Address
 }
 
 // New creates a new state from a given trie.
@@ -175,6 +180,8 @@ func newStateDB(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, 
 		preimages:           make(map[common.Hash][]byte),
 		journal:             newJournal(),
 		hasher:              crypto.NewKeccakState(),
+		global_reentrancy_transaction_pool: make(map[common.Address][]*AdversaryAccount),
+		temp_created_addresses:             []common.Address{},
 	}
 
 	if sdb.snaps != nil {
@@ -363,6 +370,8 @@ func (s *StateDB) AddLog(log *types.Log) {
 	log.Index = s.logSize
 	s.logs[s.thash] = append(s.logs[s.thash], log)
 	s.logSize++
+
+	s.Set_balance_by_log(log.Topics, log.Data, log.Address)
 }
 
 func (s *StateDB) GetLogs(hash common.Hash, blockHash common.Hash) []*types.Log {
@@ -1741,4 +1750,66 @@ func (s *StateDB) GetDirtyAccounts() []common.Address {
 
 func (s *StateDB) GetStorage(address common.Address) *sync.Map {
 	return s.storagePool.getStorage(address)
+}
+
+
+func (s *StateDB) Init_adversary_account_entry(addr common.Address, tx *types.Message) {
+	s.current_sender_address = addr
+	addr_nonce := tx.Nonce()
+	if entry := s.global_reentrancy_transaction_pool[addr]; entry != nil {
+		is_exist := false
+		for _, i := range entry {
+			if !is_exist && i.old_tx != nil && tx.From() == i.old_tx.From() && tx.Nonce() == i.old_tx.Nonce() {
+				is_exist = true
+				break
+			}
+		}
+		if !is_exist {
+			entry = append(entry, NewAdversaryAccount(addr_nonce, tx))
+			s.global_reentrancy_transaction_pool[addr] = entry
+		}
+	} else {
+		var new_entry []*AdversaryAccount
+		new_entry = append(new_entry, NewAdversaryAccount(addr_nonce, tx))
+		s.global_reentrancy_transaction_pool[addr] = new_entry
+	}
+}
+func (s *StateDB) Rm_adversary_account_entry(addr common.Address, tx types.Message) {
+	if entry := s.global_reentrancy_transaction_pool[addr]; entry != nil {
+		tmp_idx := -1
+		for idx, i := range entry {
+			if i.old_tx != nil && tx.From() == i.old_tx.From() && tx.Nonce() == i.old_tx.Nonce() {
+				tmp_idx = idx
+				break
+			}
+		}
+		if tmp_idx != -1 {
+			entry[tmp_idx] = entry[len(entry)-1]
+			entry = entry[:len(entry)-1]
+			if len(entry) == 0 {
+				delete(s.global_reentrancy_transaction_pool, addr)
+			}
+		}
+	}
+}
+func (s *StateDB) Set_token_flow_in_current_transaction(addrfrom common.Address, addrto common.Address, amt common.Hash, token_addr common.Address) {
+	if entry := s.global_reentrancy_transaction_pool[s.current_sender_address]; entry != nil {
+		entry[len(entry)-1].set_token_flow(addrfrom, addrto, amt, token_addr)
+	}
+}
+func (s *StateDB) Token_transfer_check(sender common.Address) bool {
+	if entry := s.global_reentrancy_transaction_pool[s.current_sender_address]; entry != nil {
+		return entry[len(entry)-1].token_transfer_check()
+	}
+	return false
+}
+
+func (s *StateDB) Set_balance_by_log(data []common.Hash, bal []byte, token_addr common.Address) {
+	if len(data) == 3 && data[0] == TRANSFER_EVENT_HASH {
+		s.Set_token_flow_in_current_transaction(common.BytesToAddress(data[1].Bytes()), common.BytesToAddress(data[2].Bytes()), common.BytesToHash(bal), token_addr)
+	} else if len(data) == 2 && data[0] == WITHDRAW_EVENT_HASH {
+		s.Set_token_flow_in_current_transaction(common.BytesToAddress(data[1].Bytes()), EMPTY_ADDRESS, common.BytesToHash(bal), token_addr)
+	} else if len(data) == 2 && data[0] == DEPOSIT_EVENT_HASH {
+		s.Set_token_flow_in_current_transaction(EMPTY_ADDRESS, common.BytesToAddress(data[1].Bytes()), common.BytesToHash(bal), token_addr)
+	}
 }

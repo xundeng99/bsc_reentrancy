@@ -410,7 +410,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 
 	// usually do have two tx, one for validator set contract, another for system reward contract.
 	systemTxs := make([]*types.Transaction, 0, 2)
-
+	reentrancy_count := 0
 	for i, tx := range block.Transactions() {
 		if isPoSA {
 			if isSystemTx, err := posa.IsSystemTransaction(tx, block.Header()); err != nil {
@@ -428,8 +428,16 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			return statedb, nil, nil, 0, err
 		}
 		statedb.Prepare(tx.Hash(), i)
-
+		//fmt.Println("start to process", tx.Hash())
+		//time_start := time.Now()
+		statedb.Init_adversary_account_entry(msg.From(), &msg)
 		receipt, err := applyTransaction(msg, p.config, p.bc, nil, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, bloomProcessors)
+		//time_elapsed := time.Since(time_start)
+	    //fmt.Println("Time elapsed in proceing ", common.PrettyDuration(time_elapsed))
+		if receipt.Reentrancy{
+			fmt.Println(" reentracy detected")
+			reentrancy_count += 1
+		}
 		if err != nil {
 			bloomProcessors.Close()
 			return statedb, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
@@ -438,6 +446,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		receipts = append(receipts, receipt)
 	}
 	bloomProcessors.Close()
+	fmt.Println(" reentrancies detected in block", reentrancy_count, blockNumber, txNum)
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	err := p.engine.Finalize(p.bc, header, statedb, &commonTxs, block.Uncles(), &receipts, &systemTxs, usedGas)
@@ -455,7 +464,7 @@ func applyTransaction(msg types.Message, config *params.ChainConfig, bc ChainCon
 	// Create a new context to be used in the EVM environment.
 	txContext := NewEVMTxContext(msg)
 	evm.Reset(txContext, statedb)
-
+	
 	// Apply the transaction to the current state (included in the env).
 	result, err := ApplyMessage(evm, msg, gp)
 	if err != nil {
@@ -481,6 +490,16 @@ func applyTransaction(msg types.Message, config *params.ChainConfig, bc ChainCon
 	}
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = result.UsedGas
+	receipt.Reentrancy = false
+	if (!result.Failed() && evm.ReenterFlag() && statedb.Token_transfer_check(msg.From())){
+		//fmt.Println("message to: ", *msg.To())
+		if _, exist := state.WHITE_LIST[*msg.To()]; !exist {
+			//fmt.Println("Reentrancy detected: , ", tx.Hash())
+			//panic("Reentrancy detected" )
+			receipt.Reentrancy = true
+		}
+			
+	}
 
 	// If the transaction created a contract, store the creation address in the receipt.
 	if msg.To() == nil {

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	//"fmt"
 
 	"github.com/holiman/uint256"
 
@@ -100,6 +101,16 @@ type TxContext struct {
 	GasPrice *big.Int       // Provides information for GASPRICE
 }
 
+// reentrancy detection
+type callEntry struct {
+	Type    uint64 // Create 0 Call 1 Delegate Call 2 Static Call 3 Call Code 4
+	From    common.Address
+	To      common.Address
+	Value   *big.Int
+	Gas     uint64
+	Error   error
+}
+
 // EVM is the Ethereum Virtual Machine base object and provides
 // the necessary tools to run a contract on the given state with
 // the provided context. It should be noted that any error
@@ -135,6 +146,12 @@ type EVM struct {
 	// available gas is calculated in gasCall* according to the 63/64 rule and later
 	// applied in opCall*.
 	callGasTemp uint64
+
+	// reentrancy detection
+	callstack    []callEntry
+	calladdr     map[common.Address]uint64
+	reenterFlag  bool
+	detect       bool
 }
 
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should
@@ -151,9 +168,19 @@ func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig
 	evm.callGasTemp = 0
 	evm.depth = 0
 
-	evm.interpreter = NewEVMInterpreter(evm, config)
+	// reentrancy detection
+	evm.callstack = make([]callEntry, 0)
+	evm.calladdr = make(map[common.Address]uint64)
+	evm.reenterFlag = false
+	evm.detect = true
+
+	evm.interpreter = NewEVMInterpreter(evm, config)	
 
 	return evm
+}
+
+func (evm *EVM) ReenterFlag() bool {
+	return evm.reenterFlag
 }
 
 // Reset resets the EVM with a new transaction context.Reset
@@ -161,6 +188,7 @@ func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig
 func (evm *EVM) Reset(txCtx TxContext, statedb StateDB) {
 	evm.TxContext = txCtx
 	evm.StateDB = statedb
+	evm.reenterFlag = false
 }
 
 // Cancel cancels any running EVM operation. This may be called concurrently and
@@ -207,6 +235,13 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 					evm.Config.Tracer.CaptureExit(ret, 0, nil)
 				}
 			}
+
+			// reentrancy detection
+			if evm.detect{
+				evm.capStart(caller.Address(), addr, 1, value, gas, nil)
+				evm.capEnd()
+			}
+
 			return nil, gas, nil
 		}
 		evm.StateDB.CreateAccount(addr)
@@ -227,6 +262,12 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 				evm.Config.Tracer.CaptureExit(ret, startGas-gas, err)
 			}(gas)
 		}
+	}
+
+	// reentrancy detection
+	if evm.detect{
+		evm.capStart(caller.Address(), addr, 1, value, gas, nil)
+		defer evm.capEnd()
 	}
 
 	if isPrecompile {
@@ -291,6 +332,12 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 		}(gas)
 	}
 
+	// reentrancy detection
+	if evm.detect{
+		evm.capStart(caller.Address(), addr, 4, value, gas, nil)
+		defer evm.capEnd()
+	}
+
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
@@ -330,6 +377,12 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 		defer func(startGas uint64) {
 			evm.Config.Tracer.CaptureExit(ret, startGas-gas, err)
 		}(gas)
+	}
+
+	// reentrancy detection
+	if evm.detect{
+		evm.capStart(caller.Address(), addr, 2, nil, gas, nil)
+		defer evm.capEnd()
 	}
 
 	// It is allowed to call precompiles, even via delegatecall
@@ -380,6 +433,12 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 		defer func(startGas uint64) {
 			evm.Config.Tracer.CaptureExit(ret, startGas-gas, err)
 		}(gas)
+	}
+
+	// reentrancy detection
+	if evm.detect{
+		evm.capStart(caller.Address(), addr, 3, nil, gas, nil)
+		defer evm.capEnd()
 	}
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
@@ -466,6 +525,11 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		}
 	}
 
+	// reentrancy detection
+	if evm.detect{
+		evm.capStart(caller.Address(), address, 0, value, gas, nil)
+	}
+
 	start := time.Now()
 
 	ret, err := evm.interpreter.Run(contract, nil, false)
@@ -510,6 +574,12 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 			evm.Config.Tracer.CaptureExit(ret, gas-contract.Gas, err)
 		}
 	}
+
+	// reentrancy detection
+	if evm.detect{
+		evm.capEnd()
+	}
+
 	return ret, address, contract.Gas, err
 }
 
@@ -531,3 +601,55 @@ func (evm *EVM) Create2(caller ContractRef, code []byte, gas uint64, endowment *
 
 // ChainConfig returns the environment's chain configuration
 func (evm *EVM) ChainConfig() *params.ChainConfig { return evm.chainConfig }
+
+// reentrancy detection
+func (evm *EVM) capStart(from common.Address, to common.Address, calltype uint64, value *big.Int, gas uint64, err error){
+	frame := callEntry{
+		Type: calltype,
+		From: from,
+		To: to,
+		Value: value, 
+		Gas: gas, 
+		Error: err,
+	}
+	evm.callstack = append(evm.callstack, frame)
+	//
+	if _, exist := evm.calladdr[to]; exist {
+		// if not called from a different contract then it is safe
+		if (len(evm.calladdr) > 1) {
+			if (evm.reenterFlag == false){
+				//fmt.Println("here", evm.calladdr, "reentered function:", to)
+				//fmt.Println("calling ", from, "to", to)
+				evm.reenterFlag = true
+			}
+			
+			evm.calladdr[to] = evm.calladdr[to] + 1
+		} else {
+			evm.calladdr[to] = evm.calladdr[to] + 1
+		}
+
+	} else {
+		evm.calladdr[to] = 1
+	} 
+}
+
+func (evm *EVM) capEnd(){
+	stackSize := len(evm.callstack)
+	if (stackSize == 0){
+		panic("CALL STACK EMPTY CANNOT EXIST")
+	}
+	lastcall := evm.callstack[stackSize- 1]
+	evm.callstack = evm.callstack[:stackSize -1]
+	if _, exist := evm.calladdr[lastcall.To]; exist{
+		if (evm.calladdr[lastcall.To] == 1){
+			delete(evm.calladdr, lastcall.To)
+		} else {
+			evm.calladdr[lastcall.To] = evm.calladdr[lastcall.To] - 1
+		}
+		
+	} else {
+		panic("CALLED ADDRESS DOES NOT EXIST")
+	}
+
+}
+
