@@ -1,8 +1,27 @@
 ## ECE1770 Final project
 
-This repo is the final project of ECE1770 Winter2023. The goal of the final project is to develop a system that can detect reentrancy attacks.
+This repo is the final project of ECE1770 Winter2023. The goal of the final project is to develop a system that can detect reentrancy attacks during the execution of the transaction in EVM.
 
-Most of the added code has the comment **// Reentrancy detection**
+By deploying this system, we would be able to detection malicious transactions in the tx pool, alert the validators and possibly prevent the attack transtion being packed into the blockchain.
+
+Most of the added code has the comment **// Reentrancy detection**.
+
+For more information about reentrancy attacks, check here https://hackernoon.com/hack-solidity-reentrancy-attack.
+
+As of April 10, 2023, most recent reentrancy attack was on April 05,2023 caused 1 million dollor loss (https://twitter.com/peckshield/status/1643417467879059456).
+
+## Project design
+The detection system consists two parts: an EVM call stack inspector (**core/vm/evm.go**) and an accounting module(**core/state/adversary_account.go**).
+
+The call stack inspector recognizes reentrancy patterns, that is contract A invokes some function of contract B, which calls back to a function in contract A.
+
+The accounting module calculates the net gain in USD of all parties inovlved in the transaction through recording ERC20 token transfers.
+
+If reentrancy pattern is detected by the EVM inspector and the transaction sender is a beneficiary of the transaction, the transaction will be mark as attack.
+
+For testing reasons, current system is implemented in the block processing module (**core/state_processor.go**) and tested during syncing. 
+
+However, the system can be easily migrated into tx pool (**core/tx_pool.go**).
 
 ## Building the source
 
