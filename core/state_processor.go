@@ -428,6 +428,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			return statedb, nil, nil, 0, err
 		}
 		statedb.Prepare(tx.Hash(), i)
+		// Reentrancy Detection
 		//fmt.Println("start to process", tx.Hash())
 		//time_start := time.Now()
 		statedb.Init_adversary_account_entry(msg.From(), &msg)
@@ -491,10 +492,12 @@ func applyTransaction(msg types.Message, config *params.ChainConfig, bc ChainCon
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = result.UsedGas
 	receipt.Reentrancy = false
+
+	// Reentrancy Detection
 	if (!result.Failed() && evm.ReenterFlag() && statedb.Token_transfer_check(msg.From())){
 		//fmt.Println("message to: ", *msg.To())
 		if _, exist := state.WHITE_LIST[*msg.To()]; !exist {
-			//fmt.Println("Reentrancy detected: , ", tx.Hash())
+			fmt.Println("Reentrancy detected: , ", tx.Hash())
 			//panic("Reentrancy detected" )
 			receipt.Reentrancy = true
 		}

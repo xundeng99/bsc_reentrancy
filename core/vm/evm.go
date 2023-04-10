@@ -101,7 +101,7 @@ type TxContext struct {
 	GasPrice *big.Int       // Provides information for GASPRICE
 }
 
-// reentrancy detection
+// Reentrancy detection
 type callEntry struct {
 	Type    uint64 // Create 0 Call 1 Delegate Call 2 Static Call 3 Call Code 4
 	From    common.Address
@@ -147,7 +147,7 @@ type EVM struct {
 	// applied in opCall*.
 	callGasTemp uint64
 
-	// reentrancy detection
+	// Reentrancy detection
 	callstack    []callEntry
 	calladdr     map[common.Address]uint64
 	reenterFlag  bool
@@ -168,7 +168,7 @@ func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig
 	evm.callGasTemp = 0
 	evm.depth = 0
 
-	// reentrancy detection
+	// Reentrancy detection
 	evm.callstack = make([]callEntry, 0)
 	evm.calladdr = make(map[common.Address]uint64)
 	evm.reenterFlag = false
@@ -236,7 +236,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 				}
 			}
 
-			// reentrancy detection
+			// Reentrancy detection
 			if evm.detect{
 				evm.capStart(caller.Address(), addr, 1, value, gas, nil)
 				evm.capEnd()
@@ -264,7 +264,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		}
 	}
 
-	// reentrancy detection
+	// Reentrancy detection
 	if evm.detect{
 		evm.capStart(caller.Address(), addr, 1, value, gas, nil)
 		defer evm.capEnd()
@@ -332,7 +332,7 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 		}(gas)
 	}
 
-	// reentrancy detection
+	// Reentrancy detection
 	if evm.detect{
 		evm.capStart(caller.Address(), addr, 4, value, gas, nil)
 		defer evm.capEnd()
@@ -379,7 +379,7 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 		}(gas)
 	}
 
-	// reentrancy detection
+	// Reentrancy detection
 	if evm.detect{
 		evm.capStart(caller.Address(), addr, 2, nil, gas, nil)
 		defer evm.capEnd()
@@ -435,7 +435,7 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 		}(gas)
 	}
 
-	// reentrancy detection
+	// Reentrancy detection
 	if evm.detect{
 		evm.capStart(caller.Address(), addr, 3, nil, gas, nil)
 		defer evm.capEnd()
@@ -525,7 +525,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		}
 	}
 
-	// reentrancy detection
+	// Reentrancy detection
 	if evm.detect{
 		evm.capStart(caller.Address(), address, 0, value, gas, nil)
 	}
@@ -575,7 +575,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		}
 	}
 
-	// reentrancy detection
+	// Reentrancy detection
 	if evm.detect{
 		evm.capEnd()
 	}
@@ -602,7 +602,7 @@ func (evm *EVM) Create2(caller ContractRef, code []byte, gas uint64, endowment *
 // ChainConfig returns the environment's chain configuration
 func (evm *EVM) ChainConfig() *params.ChainConfig { return evm.chainConfig }
 
-// reentrancy detection
+// Reentrancy detection
 func (evm *EVM) capStart(from common.Address, to common.Address, calltype uint64, value *big.Int, gas uint64, err error){
 	frame := callEntry{
 		Type: calltype,

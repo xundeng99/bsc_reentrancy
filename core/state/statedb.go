@@ -1752,7 +1752,7 @@ func (s *StateDB) GetStorage(address common.Address) *sync.Map {
 	return s.storagePool.getStorage(address)
 }
 
-
+// reentrancy detection
 func (s *StateDB) Init_adversary_account_entry(addr common.Address, tx *types.Message) {
 	s.current_sender_address = addr
 	addr_nonce := tx.Nonce()

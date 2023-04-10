@@ -77,6 +77,7 @@ type Receipt struct {
 	BlockNumber      *big.Int    `json:"blockNumber,omitempty"`
 	TransactionIndex uint        `json:"transactionIndex"`
  
+	// Reentrancy detection
 	Reentrancy     bool        
 }
 

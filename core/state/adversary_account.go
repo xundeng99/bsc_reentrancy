@@ -245,18 +245,18 @@ func (aa *AdversaryAccount) token_transfer_check() bool {
 		}
 	}
 	if len(beneficiary) == 0 {
-		//fmt.Println("No beneficiary found")
+		fmt.Println("No beneficiary found")
 		return false
 	}else{
-		/*
+		
 		for addr, result := range aa.account_information {
 			if result.id == Beneficiary {
-				//fmt.Println("Address", addr, " gains ", result.amt.Big(), " in 0.0001 USD unit")
+				fmt.Println("Address", addr, " gains ", result.amt.Big(), " in 0.0001 USD unit")
 			} else if result.id == Victim {
-				//fmt.Println("Address", addr, " loses ", result.amt.Big(), " in 0.0001 USD unit")
+				fmt.Println("Address", addr, " loses ", result.amt.Big(), " in 0.0001 USD unit")
 			}
 		}
-		*/
+	
 
 	}
 	// check beneficiary
